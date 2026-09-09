@@ -23,7 +23,9 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 
 @ApplicationScoped
@@ -110,19 +112,59 @@ public class GcsObjectController {
             }
             all = rolledUp;
         }
-        PageToken.Page<GcsObjectMeta> page = PageToken.paginate(all, maxResults, pageToken);
+        List<ListedResult> listedResults;
+        if (delimiter == null || delimiter.isEmpty()) {
+            listedResults = all.stream().map(ListedResult::object).toList();
+        } else {
+            TreeMap<String, ListedResult> results = new TreeMap<>();
+            for (String listedPrefix : prefixes) {
+                results.put(listedPrefix + "\0P", ListedResult.prefix(listedPrefix));
+            }
+            for (GcsObjectMeta meta : all) {
+                String prefixKey = meta.getName() + "\0P";
+                if (results.containsKey(prefixKey)) {
+                    results.put(prefixKey, ListedResult.prefixAndObject(meta.getName(), meta));
+                } else {
+                    results.put(meta.getName() + "\0O\0" + meta.getGeneration(), ListedResult.object(meta));
+                }
+            }
+            listedResults = new ArrayList<>(results.values());
+        }
+        PageToken.Page<ListedResult> page = PageToken.paginate(listedResults, maxResults, pageToken);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("kind", "storage#objects");
-        if (!page.items().isEmpty()) {
-            response.put("items", page.items());
+        List<GcsObjectMeta> pageItems = page.items().stream()
+                .map(ListedResult::object)
+                .filter(Objects::nonNull)
+                .toList();
+        if (!pageItems.isEmpty()) {
+            response.put("items", pageItems);
         }
-        if (!prefixes.isEmpty()) {
-            response.put("prefixes", new ArrayList<>(prefixes));
+        List<String> pagePrefixes = page.items().stream()
+                .map(ListedResult::prefix)
+                .filter(Objects::nonNull)
+                .toList();
+        if (!pagePrefixes.isEmpty()) {
+            response.put("prefixes", pagePrefixes);
         }
         if (page.nextPageToken() != null) {
             response.put("nextPageToken", page.nextPageToken());
         }
         return Response.ok(response).build();
+    }
+
+    private record ListedResult(String prefix, GcsObjectMeta object) {
+        private static ListedResult prefix(String prefix) {
+            return new ListedResult(prefix, null);
+        }
+
+        private static ListedResult object(GcsObjectMeta object) {
+            return new ListedResult(null, object);
+        }
+
+        private static ListedResult prefixAndObject(String prefix, GcsObjectMeta object) {
+            return new ListedResult(prefix, object);
+        }
     }
 
     @GET

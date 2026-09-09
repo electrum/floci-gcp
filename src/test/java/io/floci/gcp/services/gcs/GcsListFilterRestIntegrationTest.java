@@ -121,6 +121,37 @@ class GcsListFilterRestIntegrationTest {
     }
 
     @Test
+    void maxResultsPaginatesItemsAndPrefixesTogether() {
+        seed();
+        String nextPageToken = given().queryParam("delimiter", "/").queryParam("maxResults", 2)
+                .when().get("/storage/v1/b/" + BUCKET + "/o")
+                .then().statusCode(200)
+                .body("items", org.hamcrest.Matchers.anyOf(org.hamcrest.Matchers.nullValue(), empty()))
+                .body("prefixes", contains("a/", "b/"))
+                .extract().path("nextPageToken");
+
+        given().queryParam("delimiter", "/").queryParam("maxResults", 2)
+                .queryParam("pageToken", nextPageToken)
+                .when().get("/storage/v1/b/" + BUCKET + "/o")
+                .then().statusCode(200)
+                .body("items.name", contains("c.txt"))
+                .body("prefixes", contains("logs/"));
+    }
+
+    @Test
+    void trailingDelimiterItemAndPrefixShareOneResultSlot() {
+        seed();
+        given().queryParam("delimiter", "/")
+                .queryParam("includeTrailingDelimiter", true)
+                .queryParam("maxResults", 1)
+                .when().get("/storage/v1/b/" + BUCKET + "/o")
+                .then().statusCode(200)
+                .body("items.name", contains("a/"))
+                .body("prefixes", contains("a/"))
+                .body("nextPageToken", org.hamcrest.Matchers.notNullValue());
+    }
+
+    @Test
     void repeatedDoubleStarsAreCollapsedRatherThanCompounded() {
         // "**/**/x" means the same as "**/x"; emitting both groups multiplies the backtracking
         // the regex engine does on a name that does not match.
